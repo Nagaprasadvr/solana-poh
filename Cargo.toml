@@ -1,0 +1,33 @@
+[package]
+name = "solana-poh"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "solana-poh-test"
+path = "src/test/main.rs"
+
+[dependencies]
+anyhow = "1.0.93"
+blake3 = "1.5.4"
+bs58 = "0.5.1"
+bytes = "1.8.0"
+crossbeam = "0.8.4"
+env_logger = "0.11.5"
+hex = "0.4.3"
+http-body-util = "0.1.2"
+hyper = { version = "1.5.0", features = ["server", "http1"] }
+hyper-util = { version = "0.1.10", features = ["tokio"] }
+log = "0.4.22"
+rand = "0.8.5"
+serde = { version = "1.0.215", features = ["derive"] }
+serde_arrays = "0.1.0"
+serde_json = "1.0.133"
+tokio = { version = "1.41.1", features = [
+    "rt",
+    "rt-multi-thread",
+    "tokio-macros",
+    "macros",
+    "net",
+    "signal",
+] }
