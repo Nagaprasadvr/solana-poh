@@ -5,6 +5,7 @@ use hyper::service::service_fn;
 use hyper::{Method, Request, Response};
 use hyper_util::rt::TokioIo;
 use log::{error, info};
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use std::{
@@ -42,14 +43,22 @@ impl PoHServer {
         info!("Listening on http://{}", self.addr);
         let (tx, rx) = crossbeam::channel::unbounded::<TxEvent>();
 
-        let stop_signal = Arc::new(AtomicBool::new(false));
+        let stop_signal: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
         let poh_events = Arc::new(Mutex::new(Vec::new()));
 
-        let poh_recorder = PoHRecorder::build(100_000, rx, stop_signal.clone(), poh_events.clone());
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let tx_events = Arc::new(Mutex::new(Vec::new()));
+        let poh_recorder = PoHRecorder::build(
+            64 * 3, //3 slots
+            rx,
+            shutdown_tx.clone(),
+            stop_signal.clone(),
+            poh_events.clone(),
+            tx.clone(),
+            tx_events,
+        );
 
         let controls = poh_recorder.start_recording()?;
-
-        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
         let tx = tx.clone();
 
@@ -116,8 +125,32 @@ impl PoHServer {
         info!("Listening on http://{}", self.addr);
 
         loop {
-            let shutdown_rx = shutdown_rx.clone();
+            let mut shutdown_rx = shutdown_rx.clone();
+            let mut rng = rand::thread_rng();
+            let random: u8 = rng.gen_range(1..10);
+
+            if random > 5 {
+                info!("Randomly sending a tx event");
+                let mut random_slice = [0u8; 64];
+                rand::thread_rng().fill(&mut random_slice);
+
+                tx.send(TxEvent {
+                    signature: TxSig(random_slice),
+                    signal: TxSignal::Process,
+                })?;
+            }
+
             tokio::select! {
+                _ = shutdown_rx.changed() => {
+                    info!("Shutting down server...");
+                    for control in controls.into_iter() {
+                        control
+                            .join()
+                            .map_err(|e| anyhow::Error::msg(format!("Error: {:?}", e)))??;
+                    }
+                    info!("PoH recorder stopped...");
+                    break;
+                }
                 _ = tokio::signal::ctrl_c() => {
                     info!("Ctrl-C received, shutting down...");
                     stop_signal.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -126,14 +159,7 @@ impl PoHServer {
                         signal: TxSignal::Stop,
                     })?;
                     shutdown_tx.send(true)?;
-                    for control in controls.into_iter() {
-                        control
-                            .join()
-                            .map_err(|e| anyhow::Error::msg(format!("Error: {:?}", e)))??;
-                    }
 
-                    info!("PoH server shut down");
-                    break;
                 }
                 Ok((tcp,_)) = listener.accept() => {
                     let handler = handler.clone();
@@ -155,6 +181,8 @@ impl PoHServer {
                         }
                     });
                 }
+
+
             }
         }
 
