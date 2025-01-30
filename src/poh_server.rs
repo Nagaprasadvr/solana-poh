@@ -87,6 +87,7 @@ impl PoHServer {
                                 .as_slice()
                                 .try_into()?;
 
+                            info!("Received tx event: {:?}", tx_sig);
                             tx.send(TxEvent {
                                 signature: tx_sig,
                                 signal: TxSignal::Process,
@@ -126,19 +127,19 @@ impl PoHServer {
 
         loop {
             let mut shutdown_rx = shutdown_rx.clone();
-            let mut rng = rand::thread_rng();
-            let random: u8 = rng.gen_range(1..10);
+            // let mut rng = rand::thread_rng();
+            // let random: u8 = rng.gen_range(1..10);
 
-            if random > 5 {
-                info!("Randomly sending a tx event");
-                let mut random_slice = [0u8; 64];
-                rand::thread_rng().fill(&mut random_slice);
+            // if random > 5 {
+            info!("Randomly sending a tx event");
+            let mut random_slice = [0u8; 64];
+            rand::thread_rng().fill(&mut random_slice);
 
-                tx.send(TxEvent {
-                    signature: TxSig(random_slice),
-                    signal: TxSignal::Process,
-                })?;
-            }
+            tx.send(TxEvent {
+                signature: TxSig(random_slice),
+                signal: TxSignal::Process,
+            })?;
+            // }
 
             tokio::select! {
                 _ = shutdown_rx.changed() => {

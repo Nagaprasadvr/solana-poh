@@ -249,10 +249,20 @@ impl PoHRecorder {
             let stop_signal = stop_signal.clone();
             let tx_sender = tx_sender.clone();
             let start = std::time::Instant::now();
-            while poh_tx_tick_pointer.load(std::sync::atomic::Ordering::Relaxed) < poh_ticks + 1 {
+            let mut sleep_flag = false;
+            let mut current_tick = poh_tx_tick_pointer.load(std::sync::atomic::Ordering::Relaxed);
+            while current_tick < poh_ticks + 1 {
                 if stop_signal.load(std::sync::atomic::Ordering::Relaxed) {
                     info!("PoH hash task stopped...");
                     break;
+                }
+
+                if current_tick > poh_ticks / 2 {
+                    if !sleep_flag {
+                        info!("Sleeping for 5 seconds...");
+                        std::thread::sleep(std::time::Duration::from_secs(10));
+                        sleep_flag = true;
+                    }
                 }
 
                 let mut poh_events = poh_events
@@ -277,7 +287,8 @@ impl PoHRecorder {
 
                 poh_events.push(poh_event);
 
-                poh_tx_tick_pointer.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                current_tick =
+                    poh_tx_tick_pointer.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
 
                 drop(poh_events);
 
@@ -358,11 +369,16 @@ impl PoHVerifier {
         let hash_to_process_per_verifier = poh_events.len() / concurrent_verifiers;
         let mut handles: Vec<JoinHandle<()>> = Vec::with_capacity(concurrent_verifiers);
         let mut tx_read = 0;
+        let verifier_stop_signal = stop_signal.clone();
 
         for v in 0..concurrent_verifiers {
+            let stop_signal = verifier_stop_signal.clone();
             let tx_events = tx_events.clone();
             let events_to_verify = poh_events.clone();
             let handle = spawn(move || {
+                if stop_signal.load(std::sync::atomic::Ordering::Relaxed) {
+                    return;
+                }
                 let start_time = std::time::Instant::now();
                 info!("Starting verifier {}", v);
                 let start = v * hash_to_process_per_verifier;
@@ -373,6 +389,9 @@ impl PoHVerifier {
                 let mut is_failed = false;
 
                 for (i, event) in events_to_verify[start..=end].iter().enumerate() {
+                    if stop_signal.load(std::sync::atomic::Ordering::Relaxed) {
+                        return;
+                    }
                     let index = i + start;
 
                     if index == start + events_to_verify[start..=end].len() - 1 {
@@ -385,6 +404,7 @@ impl PoHVerifier {
                     let next_hash = bs58::encode(events_to_verify[index + 1].hash).into_string();
 
                     if next_event_is_tx {
+                        info!("Processing tx event at index {}", index);
                         let current_event_hash = event.hash;
 
                         let mut combined_hash_vec: Vec<u8> = Vec::new();
